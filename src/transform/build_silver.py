@@ -6,7 +6,6 @@ from pathlib import Path
 from src.utils.paths import part_dir, ensure_dir
 
 def _standardize_tracker_cols(df: pd.DataFrame) -> pd.DataFrame:
-    # coba map beberapa variasi nama kolom umum
     mapping_candidates = {
         "tanggal_input": ["tanggal_input", "tanggal", "date"],
         "kondisi_kulit": ["kondisi_kulit", "kondisi", "skin_condition"],
@@ -25,7 +24,6 @@ def _standardize_tracker_cols(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.rename(columns=rename_map)
 
-    # pastikan kolom target ada
     for col in ["tanggal_input", "kondisi_kulit", "penggunaan_bahan_aktif", "reaksi_kulit"]:
         if col not in df.columns:
             df[col] = None

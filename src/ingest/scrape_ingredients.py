@@ -13,7 +13,6 @@ def _safe_name(s: str) -> str:
 def extract_ingredients_list(html: str) -> list[str]:
     soup = BeautifulSoup(html, "lxml")
 
-    # Strategi 1: INCIDecoder biasanya punya list ingredient dengan link <a>
     cand = []
     for sel in ["div.ingredlist a", "#ingredlist a", "div#ingredlist a"]:
         nodes = soup.select(sel)
@@ -23,12 +22,10 @@ def extract_ingredients_list(html: str) -> list[str]:
     if cand:
         return cand
 
-    # Strategi 2: cari teks setelah kata "Ingredients"
     text = soup.get_text(" ", strip=True)
     m = re.search(r"(Ingredients|INGREDIENTS)\s*[:\-]?\s*(.+)", text)
     if m:
         tail = m.group(2)
-        # ambil secukupnya biar nggak kepanjangan
         tail = tail[:2000]
         parts = re.split(r",|;|\|", tail)
         return [p.strip() for p in parts if p.strip()]
@@ -75,7 +72,7 @@ def run(d: date, pages_csv_path: str = "sources/product_pages.csv") -> pd.DataFr
             ings = extract_ingredients_list(resp.text)
             rules = conflict_rules_from_ingredients(ings)
 
-            time.sleep(1)  # biar tidak spam request
+            time.sleep(1)  
 
         rows.append({
             "nama_brand": brand,
@@ -87,8 +84,6 @@ def run(d: date, pages_csv_path: str = "sources/product_pages.csv") -> pd.DataFr
         })
 
     df = pd.DataFrame(rows)
-
-    # simpan hasil parsing ke bronze juga, supaya silver bisa baca dari file
     parsed_path = out_parsed_dir / "ingredients.csv"
     df.to_csv(parsed_path, index=False)
 

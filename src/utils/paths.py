@@ -4,7 +4,6 @@ from datetime import date
 BASE = Path("datalake")
 
 def part_dir(layer: str, name: str, d: date) -> Path:
-    # contoh: datalake/bronze/weather_raw/date=2025-12-23/
     return BASE / layer / name / f"date={d.isoformat()}"
 
 def ensure_dir(p: Path) -> Path:

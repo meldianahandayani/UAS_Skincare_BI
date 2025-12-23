@@ -9,7 +9,6 @@ from src.utils.paths import part_dir, ensure_dir
 from src.recommend.rules import make_recommendation
 
 def run(d: date, ingredients_df: pd.DataFrame) -> dict:
-    # baca silver
     inv_path = Path(part_dir("silver", "inventory", d)) / "inventory.parquet"
     trk_path = Path(part_dir("silver", "tracker", d)) / "tracker.parquet"
     wth_path = Path(part_dir("silver", "weather", d)) / "weather.parquet"
@@ -22,8 +21,6 @@ def run(d: date, ingredients_df: pd.DataFrame) -> dict:
     con.execute(f"CREATE VIEW wth AS SELECT * FROM read_parquet('{wth_path.as_posix()}')")
     con.execute(f"CREATE VIEW ing AS SELECT * FROM read_parquet('{ing_path.as_posix()}')")
 
-
-    # ambil tracker hari ini; kalau tidak ada, ambil baris terakhir
     daily = con.execute("""
         WITH t AS (
           SELECT * FROM trk WHERE tanggal_input = ?
@@ -42,17 +39,15 @@ def run(d: date, ingredients_df: pd.DataFrame) -> dict:
         LEFT JOIN last_t ON TRUE
     """, [str(d)]).df()
 
-    # inventory check: apakah ada sunscreen?
     inv_df = con.execute("SELECT kategori, tanggal_kedaluwarsa FROM inv").df()
     has_sunscreen = False
     if "kategori" in inv_df.columns:
         has_sunscreen = (inv_df["kategori"].astype(str).str.lower() == "sunscreen").any()
 
-    # conflict notes dari scraping (gabungkan ringkas)
     notes = ""
     if isinstance(ingredients_df, pd.DataFrame) and "conflict_rules" in ingredients_df.columns:
         lst = [x for x in ingredients_df["conflict_rules"].fillna("").tolist() if x.strip()]
-        notes = " | ".join(lst[:6])  # batasi biar nggak kepanjangan
+        notes = " | ".join(lst[:6])  
 
     row = daily.iloc[0].to_dict()
     am, pm, warn = make_recommendation(
@@ -71,7 +66,6 @@ def run(d: date, ingredients_df: pd.DataFrame) -> dict:
         "warnings": warn
     }])
 
-    # simpan gold
     gold_daily_dir = ensure_dir(part_dir("gold", "daily_context", d))
     gold_rec_dir = ensure_dir(part_dir("gold", "recommendation", d))
 
@@ -81,7 +75,6 @@ def run(d: date, ingredients_df: pd.DataFrame) -> dict:
     daily.to_parquet(daily_out, index=False)
     rec.to_parquet(rec_out, index=False)
 
-    # (opsional) load ke postgres daily_analysis (append)
     if DB_URL:
         try:
             engine = create_engine(DB_URL)

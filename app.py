@@ -6,8 +6,6 @@ from pathlib import Path
 import io
 import zipfile
 import os
-
-# Import fungsi dari pipeline
 from src.pipeline import run_all
 from src.utils.config import DB_URL
 
@@ -134,7 +132,7 @@ st.markdown(
 )
 
 # =========================================================
-# 2. DEFINISI FUNGSI (Harus sebelum dipanggil)
+# 2. DEFINISI FUNGSI
 # =========================================================
 def get_engine():
     if not DB_URL: return None
@@ -246,7 +244,6 @@ with st.sidebar:
     
     if st.button("🔄 Sync Data Pipeline", use_container_width=True):
         with st.spinner(f"Updating weather for {selected_city_name}..."):
-            # KIRIM LAT/LON KE PIPELINE
             res = run_all(lat=selected_coords["lat"], lon=selected_coords["lon"])
         
         st.session_state["pipeline_run"] = datetime.now()
@@ -278,7 +275,6 @@ if nav == "Dashboard":
         st.markdown(f"### 👋 Hello, User")
         st.markdown(f"Skin environment analysis for **{today.strftime('%A, %d %B %Y')}**")
     with col_r:
-        # Ambil nama kota dari session state (agar dinamis setelah sync)
         current_city = st.session_state.get("last_city", selected_city_name)
         st.markdown(f"<div style='text-align:right; font-weight:600; color:#ec4899;'>📍 {current_city}, ID</div>", unsafe_allow_html=True)
     

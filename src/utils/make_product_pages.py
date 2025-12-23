@@ -6,7 +6,7 @@ from pathlib import Path
 
 load_dotenv()
 
-DB_URL = os.getenv("DB_URL")  # contoh: postgresql://admin:admin@localhost:5432/skincare_db
+DB_URL = os.getenv("DB_URL") 
 
 def main():
     engine = create_engine(DB_URL)
@@ -16,7 +16,6 @@ def main():
         ORDER BY nama_brand, nama_produk
     """, engine)
 
-    # bikin kolom url kosong dulu (nanti kamu isi)
     df["url"] = ""
 
     Path("sources").mkdir(parents=True, exist_ok=True)

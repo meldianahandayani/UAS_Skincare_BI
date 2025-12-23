@@ -8,7 +8,6 @@ from src.ingest.scrape_ingredients import run as ingest_scrape
 from src.transform.build_silver import run as build_silver
 from src.transform.build_gold import run as build_gold
 
-# Tambahkan argumen lat=None, lon=None
 def run_all(lat=None, lon=None):
     d = date.today()
 
