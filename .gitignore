@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+datalake/
+*.db
+google_credentials.json
+.venv/
