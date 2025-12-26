@@ -86,24 +86,7 @@ def run(d: date, lat=None, lon=None) -> str:
 
     # FALLBACK DATA DUMMY 
     if payload is None:
-        print("⚠️ Semua koneksi gagal. Menggunakan DATA DUMMY (Safe Mode).")
-        payload = {
-            "_meta": {
-                "fetched_at": datetime.utcnow().isoformat() + "Z",
-                "source_url": None,
-                "note": "fallback: koneksi gagal total.",
-                "error": last_err,
-            },
-            "current": {
-                "temp": 30.5,       # Dummy Suhu
-                "humidity": 75,     # Dummy Kelembapan
-                "uvi": 6.5,         # Dummy UV Index
-                "weather": [{"main": "Clouds", "description": "Offline Clouds"}],
-            },
-            "main": {"temp": 30.5, "humidity": 75},
-            "weather": [{"main": "Clouds"}],
-            "coord": {"lat": target_lat, "lon": target_lon}
-        }
+        raise RuntimeError(f"Gagal mengambil data cuaca dari API (OpenWeatherMap). Error: {last_err}. Pastikan API Key valid dan koneksi internet stabil.")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:

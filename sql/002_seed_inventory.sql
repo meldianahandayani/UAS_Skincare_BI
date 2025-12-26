@@ -1,5 +1,5 @@
 INSERT INTO inventory_skincare
-(nama_brand, nama_produk, kategori, tanggal_beli, tanggal_buka, pao_bulan, tanggal_kedaluwarsa, volume_ml, harga_idr, catatan)
+(nama_brand, nama_produk, kategori, tanggal_beli, tanggal_buka, pao_bulan, tanggal_kadaluwarsa, volume_ml, harga_idr, catatan)
 VALUES
 -- ===== Sunscreen =====
 ('Azarine','Hydrasoothe Sunscreen Gel SPF45','Sunscreen','2025-10-25','2025-11-10',12,'2027-02-01',50,65000,'Dipakai pagi'),
