@@ -701,6 +701,11 @@ if nav == "Dashboard":
             
             st.warning(f"⏳ **EXPIRY WARNING**: {len(soon_list)} product(s) ({', '.join(items)}{'...' if len(soon_list)>3 else ''}) Prioritize product usage before expiry")
 
+        # --- MISSING ESSENTIALS CHECK ---
+        has_sunscreen = chk['kategori'].str.contains('Sunscreen|SPF|Sunblock', case=False, na=False).any()
+        if not has_sunscreen:
+            st.warning("☀️ **Missing Essential**: Kamu belum punya **Sunscreen** di inventory! Sun protection adalah langkah terpenting skincare.")
+
     st.markdown("### 🧴 Daily Protocol")
     
     if df_rec.empty:

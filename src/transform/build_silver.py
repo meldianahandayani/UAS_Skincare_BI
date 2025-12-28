@@ -38,15 +38,21 @@ def _parse_ingredients_from_html(html_path: str) -> str:
         p = Path(html_path)
         if not p.exists(): return ""
         
-        # Import our new ingredient parser
-        from src.ingest.parse_ingredients import IngredientParser
+        content = p.read_text(encoding="utf-8", errors="replace")
+        soup = BeautifulSoup(content, "html.parser")
         
-        parser = IngredientParser()
-        ingredients_data = parser.parse_html_file(p)
+        ingredients = []
+        rows = soup.find_all("tr", class_="iStuff")
+        if not rows: rows = soup.find_all("tr")
         
-        # Extract just the ingredient names for simple list
-        ingredient_names = [ing.name for ing in ingredients_data if ing.name]
-        return ", ".join(ingredient_names)
+        for tr in rows:
+            tds = tr.find_all("td")
+            if len(tds) >= 1:
+                name = tds[0].get_text(strip=True)
+                if name and "Ingredient" not in name and len(name) > 1:
+                    ingredients.append(name)
+                    
+        return ", ".join(ingredients)
     except Exception as e:
         print(f"Warning: Error parsing {html_path}: {e}")
         return ""
@@ -80,23 +86,29 @@ def _parse_detailed_json(html_path: str) -> str:
         p = Path(html_path)
         if not p.exists(): return "[]"
         
-        # Import our new ingredient parser
-        from src.ingest.parse_ingredients import IngredientParser
+        content = p.read_text(encoding="utf-8", errors="replace")
+        soup = BeautifulSoup(content, "html.parser")
         
-        parser = IngredientParser()
-        ingredients_data = parser.parse_html_file(p)
-        
-        # Convert to the format expected by the app
         data = []
-        for ing in ingredients_data:
-            if ing.name:  # Only include valid ingredients
-                data.append({
-                    "Ingredient": ing.name, 
-                    "Function": ing.function if ing.function else "Unknown", 
-                    "Acne": _safe_int(ing.acne_rating) if ing.acne_rating is not None else 0, 
-                    "Irritant": _safe_int(ing.irritant_rating) if ing.irritant_rating is not None else 0,
-                    "Safety": ing.safety_rating if ing.safety_rating else None
-                })
+        rows = soup.find_all("tr", class_="iStuff")
+        if not rows: rows = soup.find_all("tr")
+        
+        for tr in rows:
+            tds = tr.find_all("td")
+            if len(tds) >= 4:
+                name = tds[0].get_text(strip=True)
+                func = tds[1].get_text(strip=True)
+                acne = tds[2].get_text(strip=True)
+                irritant = tds[3].get_text(strip=True)
+                
+                if name and "Ingredient" not in name:
+                    data.append({
+                        "Ingredient": name, 
+                        "Function": _clean_function_description(func), 
+                        "Acne": _safe_int(acne), 
+                        "Irritant": _safe_int(irritant),
+                        "Safety": tds[4].get_text(strip=True) if len(tds) > 4 else None
+                    })
         
         return json.dumps(data)
     except Exception as e:
@@ -130,7 +142,7 @@ def run(d: date) -> dict:
     if inv_path.exists():
         inv = pd.read_csv(inv_path)
         # Standarisasi tanggal inventory
-        for col in ["tanggal_beli", "tanggal_buka", "tanggal_kadaluwarsa"]:
+        for col in ["tanggal_buka", "tanggal_kadaluwarsa"]:
             if col in inv.columns:
                 inv[col] = pd.to_datetime(inv[col], errors="coerce").dt.date
         
