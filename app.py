@@ -259,6 +259,14 @@ def get_engine():
         print(f"❌ Database Connection Error: {e}")
         return None
 
+def check_db_status(engine):
+    if engine is None: return False
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except: return False
+
 def read_inventory(engine) -> pd.DataFrame:
     try:
         return pd.read_sql("SELECT * FROM inventory_skincare ORDER BY nama_produk;", engine)
@@ -597,7 +605,8 @@ with st.sidebar:
         st.rerun()
         
     engine = get_engine()
-    st.markdown(f"<div style='font-size:0.8rem; color:#94a3b8; margin-top:10px;'>Database: {'🟢 Connected' if engine else '🔴 Disconnected'}</div>", unsafe_allow_html=True)
+    db_status = "🟢 Connected" if check_db_status(engine) else "🔴 Disconnected"
+    st.markdown(f"<div style='font-size:0.8rem; color:#94a3b8; margin-top:10px;'>Database: {db_status}</div>", unsafe_allow_html=True)
 
 # =========================================================
 # 4. LOAD DATA UTAMA
@@ -1303,13 +1312,13 @@ elif nav == "Inventory":
         st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
         
         # --- FITUR BARU: Search CosDNA ---
-        st.markdown("#### 🔍 Search & Add from CosDNA")
+        st.markdown("#### 🔍 Search & Add")
         col_s1, col_s2 = st.columns([3, 1])
         search_kw = col_s1.text_input("Search Product Name", key="search_cosdna_input")
         
         if col_s2.button("Search", key="btn_search_cosdna"):
             if search_kw:
-                with st.spinner("Searching CosDNA..."):
+                with st.spinner("Searching..."):
                     results = search_cosdna(search_kw)
                     st.session_state["cosdna_results"] = results
                     if not results:
@@ -1360,13 +1369,13 @@ elif nav == "Ingredient Scanner":
     st.markdown("### 🔎 Product Composition Analysis")
     st.caption("Powered by Web Scraping & Heuristic Analysis")
 
-    st.markdown("#### Search & Analyze from CosDNA")
+    st.markdown("#### Search & Analyze")
     col_scan1, col_scan2 = st.columns([3, 1])
     scan_kw = col_scan1.text_input("Enter Product Name:", key="scan_cosdna_input")
     
     if col_scan2.button("Search", key="btn_scan_cosdna"):
         if scan_kw:
-            with st.spinner("Searching CosDNA..."):
+            with st.spinner("Searching..."):
                 results = search_cosdna(scan_kw)
                 st.session_state["scan_results"] = results
                 if not results:
