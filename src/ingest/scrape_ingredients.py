@@ -4,87 +4,88 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from datetime import date
+from urllib.parse import quote_plus
 
 from src.utils.paths import part_dir, ensure_dir
 
 def _safe_name(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "_", s).strip("_")[:120]
 
-def extract_ingredients_list(html: str) -> list[str]:
-    soup = BeautifulSoup(html, "lxml")
+def search_cosdna_url(product_name: str) -> str:
+    """Mencari URL produk di CosDNA berdasarkan nama."""
+    try:
+        safe_query = quote_plus(product_name)
+        search_url = f"https://cosdna.com/eng/product.php?q={safe_query}"
+        headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://cosdna.com/"}
+        resp = requests.get(search_url, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.content, "html.parser")
+            all_links = soup.find_all("a", href=True)
+            for link in all_links:
+                href = link['href']
+                # Ambil link produk kosmetik yang valid
+                if "cosmetic_" in href:
+                    return href if "http" in href else f"https://cosdna.com/eng/{href}"
+    except Exception as e:
+        print(f"⚠️ Search failed for {product_name}: {e}")
+    return ""
 
-    cand = []
-    for sel in ["div.ingredlist a", "#ingredlist a", "div#ingredlist a"]:
-        nodes = soup.select(sel)
-        if nodes:
-            cand = [n.get_text(" ", strip=True) for n in nodes if n.get_text(strip=True)]
-            break
-    if cand:
-        return cand
-
-    text = soup.get_text(" ", strip=True)
-    m = re.search(r"(Ingredients|INGREDIENTS)\s*[:\-]?\s*(.+)", text)
-    if m:
-        tail = m.group(2)
-        tail = tail[:2000]
-        parts = re.split(r",|;|\|", tail)
-        return [p.strip() for p in parts if p.strip()]
-
-    return []
-
-def conflict_rules_from_ingredients(ings: list[str]) -> list[str]:
-    low = " ".join(i.lower() for i in ings)
-    rules = []
-
-    if "retinol" in low or "retino" in low:
-        rules.append("Retinoid: hindari bareng AHA/BHA pada malam yang sama jika kulit sensitif.")
-    if any(k in low for k in ["glycolic", "lactic", "salicylic", "aha", "bha", "pha"]):
-        rules.append("Exfoliant: jika kulit kemerahan/iritasi, jadikan recovery night (hindari eksfoliasi).")
-    if "ascorbic" in low or "vitamin c" in low:
-        rules.append("Vitamin C: gunakan sunscreen pada siang hari.")
-    return rules
-
-def run(d: date, pages_csv_path: str = "sources/product_pages.csv") -> pd.DataFrame:
-    pages = pd.read_csv(pages_csv_path)
-
+def run(d: date, product_list: list[str] = None) -> pd.DataFrame:
     out_html_dir = ensure_dir(part_dir("bronze", "ingredients_html", d))
-    out_parsed_dir = ensure_dir(part_dir("bronze", "ingredients_parsed", d))
+
+    if not product_list:
+        return pd.DataFrame()
+
+    # Hapus duplikat nama produk
+    unique_products = list(set(product_list))
+    print(f"🕷️ Processing {len(unique_products)} unique products from Journal & Inventory...")
 
     rows = []
-    for _, r in pages.iterrows():
-        brand = str(r.get("nama_brand", "")).strip()
-        product = str(r.get("nama_produk", "")).strip()
-        url = str(r.get("url", "")).strip()
+    for prod in unique_products:
+        prod = prod.strip()
+        if not prod: continue
 
+        # 1. Cari URL otomatis
+        url = search_cosdna_url(prod)
         html_path = ""
-        ings = []
-        rules = []
 
-        if url and url.lower() != "nan":
-            resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-            resp.raise_for_status()
-
-            fname = _safe_name(f"{brand}__{product}") + ".html"
-            html_file = out_html_dir / fname
-            html_file.write_text(resp.text, encoding="utf-8")
-            html_path = str(html_file)
-
-            ings = extract_ingredients_list(resp.text)
-            rules = conflict_rules_from_ingredients(ings)
-
-            time.sleep(1)  
+        if url:
+            try:
+                # Fix double slashes in URL - remove /eng//eng/
+                fixed_url = url.replace("/eng//eng/", "/eng/")
+                print(f"🔗 Fixed URL for {prod}: {fixed_url}")
+                
+                # 2. Download HTML
+                resp = requests.get(fixed_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+                if resp.status_code == 200:
+                    # Verify we got actual content (not an error page)
+                    if len(resp.text) > 1000 and "cosmetic" in resp.text.lower():
+                        fname = _safe_name(prod) + ".html"
+                        html_file = out_html_dir / fname
+                        html_file.write_text(resp.text, encoding="utf-8")
+                        html_path = str(html_file)
+                        print(f"✅ Scraped: {prod} ({len(resp.text)} chars)")
+                    else:
+                        print(f"⚠️ Warning: Content too short or invalid for {prod}")
+                else:
+                    print(f"❌ HTTP {resp.status_code} for {prod}: {fixed_url}")
+            except Exception as e:
+                print(f"❌ Error scraping {prod}: {e}")
+        else:
+            print(f"⚠️ URL not found for: {prod}")
 
         rows.append({
-            "nama_brand": brand,
-            "nama_produk": product,
+            "nama_produk": prod,
             "url": url,
-            "ingredients_list": "|".join(ings),
-            "conflict_rules": " | ".join(rules),
-            "html_path": html_path
+            "html_path": html_path,
+            "scraped_date": d
         })
 
     df = pd.DataFrame(rows)
-    parsed_path = out_parsed_dir / "ingredients.csv"
-    df.to_csv(parsed_path, index=False)
+    
+    # Simpan index metadata agar Silver layer tahu mapping file HTML ke Nama Produk
+    if not df.empty:
+        df.to_csv(out_html_dir / "scraped_index.csv", index=False)
 
     return df

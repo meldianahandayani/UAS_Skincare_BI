@@ -7,8 +7,7 @@ CREATE TABLE IF NOT EXISTS inventory_skincare (
   tanggal_buka DATE,
   pao_bulan INT,
   tanggal_kadaluwarsa DATE,
-  harga_idr NUMERIC,
-  volume_ml INT
+  catatan TEXT
 );
 
 CREATE TABLE IF NOT EXISTS daily_analysis (

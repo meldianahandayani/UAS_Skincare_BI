@@ -1,4 +1,5 @@
 import pandas as pd
+import json
 
 def make_recommendation(uvi_am, hum_am, hum_pm, kondisi_kulit, reaksi_kulit, has_sunscreen: bool, conflict_notes: str):
     am, pm, warn = [], [], []
@@ -100,26 +101,6 @@ def detect_conflicts_enhanced(product_names: list[str], ingredients_df=None) -> 
     
     if has_benzoyl and has_vit_c:
         warnings.append("⚠️ **PERINGATAN: Benzoyl Peroxide + Vitamin C**. Potensi degradasi Vitamin C.")
-    
-    # Additional analysis from ingredients if available
-    if ingredients_df is not None and not ingredients_df.empty:
-        # Filter to only selected products to avoid spamming warnings for the whole database
-        relevant_ing = ingredients_df[ingredients_df['nama_produk'].isin(product_names)]
-        
-        # Analyze ingredients for comedogenic and irritant risks
-        for _, row in relevant_ing.iterrows():
-            if "ingredients_list" in row and pd.notna(row["ingredients_list"]):
-                ing_text = str(row["ingredients_list"]).lower()
-                
-                # Check for high-risk ingredients
-                high_risk = ["alcohol denat", "fragrance", "parfum", "menthol"]
-                comedogenic = ["coconut oil", "isopropyl myristate", "laureth-4"]
-                
-                if any(risk in ing_text for risk in high_risk):
-                    warnings.append(f"⚠️ Produk '{row.get('nama_produk', 'Unknown')}' mengandung bahan iritan tinggi.")
-                
-                if any(come in ing_text for come in comedogenic):
-                    warnings.append(f"⚠️ Produk '{row.get('nama_produk', 'Unknown')}' berisiko menyumbat pori.")
     
     # Safety recommendations
     if not conflicts and not warnings:
@@ -255,3 +236,228 @@ def analyze_daily_safety(am_products: list[str], pm_products: list[str],
          warnings.append("⚠️ **High Retinol Load**: Using Retinol twice a day is usually too harsh.")
 
     return warnings
+
+def display_acne_triggers(ingredients_df, selected_products: list[str] = None) -> str:
+    """
+    Display high acne trigger ingredients found in products
+    Shows ingredients with acne score >= 3
+    """
+    if ingredients_df is None or ingredients_df.empty:
+        return "❌ No ingredient data available"
+    
+    # Filter to selected products or all if none specified
+    if selected_products:
+        relevant_products = ingredients_df[ingredients_df['nama_produk'].isin(selected_products)]
+    else:
+        relevant_products = ingredients_df.copy()
+    
+    high_risk_triggers = []
+    
+    # Process each product
+    for _, row in relevant_products.iterrows():
+        if "detailed_analysis" not in row or pd.isna(row["detailed_analysis"]):
+            continue
+            
+        try:
+            # Parse the JSON detailed analysis
+            import json
+            details = json.loads(row["detailed_analysis"])
+            if not details:
+                continue
+                
+            # Convert to DataFrame for easier analysis
+            df_det = pd.DataFrame(details)
+            
+            # Normalize columns if needed
+            if 'acne' in df_det.columns and 'Acne' not in df_det.columns:
+                df_det.rename(columns={'acne': 'Acne', 'irritant': 'Irritant', 'name': 'Ingredient'}, inplace=True)
+            
+            if 'Acne' not in df_det.columns: continue
+            
+            # Find high acne risk ingredients (score >= 3)
+            df_det['Acne'] = pd.to_numeric(df_det['Acne'], errors='coerce').fillna(0)
+            high_acne = df_det[df_det['Acne'] >= 3]
+            
+            for _, ingredient in high_acne.iterrows():
+                product_name = row['nama_produk']
+                ingredient_name = ingredient['Ingredient']
+                acne_score = ingredient['Acne']
+                
+                high_risk_triggers.append({
+                    'product': product_name,
+                    'ingredient': ingredient_name,
+                    'score': acne_score
+                })
+                
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            continue
+    
+    # Generate display
+    if not high_risk_triggers:
+        return "✅ No high acne trigger ingredients found"
+    
+    # Format the display
+    display = "🌋 Acne Triggers\n"
+    
+    # Group by product for cleaner display
+    products_with_triggers = {}
+    for trigger in high_risk_triggers:
+        product = trigger['product']
+        if product not in products_with_triggers:
+            products_with_triggers[product] = []
+        products_with_triggers[product].append(trigger)
+    
+    # Display each product and its triggers
+    for product, triggers in products_with_triggers.items():
+        display += f"\n🔍 **{product}**\n"
+        for trigger in triggers:
+            display += f"• {trigger['ingredient']} ({trigger['score']})\n"
+    
+    return display.strip()
+
+def display_irritant_triggers(ingredients_df, selected_products: list[str] = None) -> str:
+    """
+    Display high irritant trigger ingredients found in products
+    Shows ingredients with irritant score >= 3
+    """
+    if ingredients_df is None or ingredients_df.empty:
+        return "❌ No ingredient data available"
+    
+    # Filter to selected products or all if none specified
+    if selected_products:
+        relevant_products = ingredients_df[ingredients_df['nama_produk'].isin(selected_products)]
+    else:
+        relevant_products = ingredients_df.copy()
+    
+    high_risk_triggers = []
+    
+    # Process each product
+    for _, row in relevant_products.iterrows():
+        if "detailed_analysis" not in row or pd.isna(row["detailed_analysis"]):
+            continue
+            
+        try:
+            # Parse the JSON detailed analysis
+            import json
+            details = json.loads(row["detailed_analysis"])
+            if not details:
+                continue
+                
+            # Convert to DataFrame for easier analysis
+            df_det = pd.DataFrame(details)
+            
+            # Normalize columns if needed
+            if 'irritant' in df_det.columns and 'Irritant' not in df_det.columns:
+                df_det.rename(columns={'acne': 'Acne', 'irritant': 'Irritant', 'name': 'Ingredient'}, inplace=True)
+
+            if 'Irritant' not in df_det.columns: continue
+
+            # Find high irritant risk ingredients (score >= 3)
+            df_det['Irritant'] = pd.to_numeric(df_det['Irritant'], errors='coerce').fillna(0)
+            high_irr = df_det[df_det['Irritant'] >= 3]
+            
+            for _, ingredient in high_irr.iterrows():
+                product_name = row['nama_produk']
+                ingredient_name = ingredient['Ingredient']
+                irr_score = ingredient['Irritant']
+                
+                high_risk_triggers.append({
+                    'product': product_name,
+                    'ingredient': ingredient_name,
+                    'score': irr_score
+                })
+                
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            continue
+    
+    # Generate display
+    if not high_risk_triggers:
+        return "✅ No high irritant trigger ingredients found"
+    
+    # Format the display
+    display = "⚠️ Irritant Triggers\n"
+    
+    # Group by product for cleaner display
+    products_with_triggers = {}
+    for trigger in high_risk_triggers:
+        product = trigger['product']
+        if product not in products_with_triggers:
+            products_with_triggers[product] = []
+        products_with_triggers[product].append(trigger)
+    
+    # Display each product and its triggers
+    for product, triggers in products_with_triggers.items():
+        display += f"\n🔍 **{product}**\n"
+        for trigger in triggers:
+            display += f"• {trigger['ingredient']} ({trigger['score']})\n"
+    
+    return display.strip()
+
+def create_ingredient_risk_summary(ingredients_df, selected_products: list[str] = None) -> dict:
+    """
+    Create a comprehensive risk summary for selected products
+    """
+    if ingredients_df is None or ingredients_df.empty:
+        return {"error": "No ingredient data available"}
+    
+    # Filter to selected products
+    if selected_products:
+        relevant_products = ingredients_df[ingredients_df['nama_produk'].isin(selected_products)]
+    else:
+        relevant_products = ingredients_df.copy()
+    
+    summary = {
+        "acne_triggers": [],
+        "irritant_triggers": [],
+        "safe_products": [],
+        "high_risk_products": []
+    }
+    
+    # Analyze each product
+    for _, row in relevant_products.iterrows():
+        product_name = row['nama_produk']
+        has_high_acne = False
+        has_high_irr = False
+        
+        if "detailed_analysis" not in row or pd.isna(row["detailed_analysis"]):
+            continue
+            
+        try:
+            details = json.loads(row["detailed_analysis"])
+            if not details:
+                continue
+                
+            df_det = pd.DataFrame(details)
+            
+            # Check for high-risk ingredients
+            high_acne = df_det[df_det['Acne'] >= 3]
+            high_irr = df_det[df_det['Irritant'] >= 3]
+            
+            # Process high acne risks
+            for _, ingredient in high_acne.iterrows():
+                has_high_acne = True
+                summary["acne_triggers"].append({
+                    'product': product_name,
+                    'ingredient': ingredient['Ingredient'],
+                    'score': ingredient['Acne']
+                })
+            
+            # Process high irritant risks
+            for _, ingredient in high_irr.iterrows():
+                has_high_irr = True
+                summary["irritant_triggers"].append({
+                    'product': product_name,
+                    'ingredient': ingredient['Ingredient'],
+                    'score': ingredient['Irritant']
+                })
+            
+            # Categorize product safety
+            if has_high_acne or has_high_irr:
+                summary["high_risk_products"].append(product_name)
+            else:
+                summary["safe_products"].append(product_name)
+                
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+    
+    return summary

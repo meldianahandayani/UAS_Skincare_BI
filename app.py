@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import date, datetime, timedelta
@@ -19,17 +20,36 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Daftar Kota untuk Pilihan Lokasi
-CITIES = {
+# Daftar Kota Utama (Cache Koordinat) untuk performa
+MAJOR_CITIES_COORDS = {
     "Jakarta": {"lat": -6.2088, "lon": 106.8456},
-    "Banjarmasin": {"lat": -3.3194, "lon": 114.5908},
-    "Bandung": {"lat": -6.9175, "lon": 107.6191},
     "Surabaya": {"lat": -7.2575, "lon": 112.7521},
-    "Yogyakarta": {"lat": -7.7955, "lon": 110.3695},
+    "Bandung": {"lat": -6.9175, "lon": 107.6191},
     "Medan": {"lat": 3.5952, "lon": 98.6722},
+    "Semarang": {"lat": -6.9667, "lon": 110.4167},
     "Makassar": {"lat": -5.1477, "lon": 119.4328},
-    "Denpasar (Bali)": {"lat": -8.6705, "lon": 115.2126},
+    "Palembang": {"lat": -2.9761, "lon": 104.7754},
+    "Denpasar": {"lat": -8.6705, "lon": 115.2126},
+    "Banjarmasin": {"lat": -3.3194, "lon": 114.5908},
+    "Yogyakarta": {"lat": -7.7955, "lon": 110.3695},
 }
+
+# Daftar Lengkap Kota di Indonesia (Sorted)
+ALL_CITIES = sorted([
+    "Ambon", "Balikpapan", "Banda Aceh", "Bandar Lampung", "Bandung", "Banjar", "Banjarbaru", "Banjarmasin", 
+    "Batam", "Batu", "Bau-Bau", "Bekasi", "Bengkulu", "Bima", "Binjai", "Bitung", "Blitar", "Bogor", 
+    "Bontang", "Bukittinggi", "Cilegon", "Cimahi", "Cirebon", "Denpasar", "Depok", "Dumai", "Gorontalo", 
+    "Gunungsitoli", "Jakarta", "Jambi", "Jayapura", "Kediri", "Kendari", "Kotamobagu", "Kupang", 
+    "Langsa", "Lhokseumawe", "Lubuklinggau", "Madiun", "Magelang", "Makassar", "Malang", "Manado", 
+    "Mataram", "Medan", "Metro", "Mojokerto", "Padang", "Padang Panjang", "Padang Sidempuan", 
+    "Pagar Alam", "Palangka Raya", "Palembang", "Palopo", "Palu", "Pangkal Pinang", "Parepare", 
+    "Pariaman", "Pasuruan", "Payakumbuh", "Pekalongan", "Pekanbaru", "Pematangsiantar", "Pontianak", 
+    "Prabumulih", "Probolinggo", "Sabang", "Salatiga", "Samarinda", "Sawahlunto", "Semarang", "Serang", 
+    "Sibolga", "Singkawang", "Solok", "Sorong", "Subulussalam", "Sukabumi", "Sungai Penuh", "Surabaya", 
+    "Surakarta", "Tangerang", "Tangerang Selatan", "Tanjung Pinang", "Tanjungbalai", "Tarakan", 
+    "Tasikmalaya", "Tebing Tinggi", "Tegal", "Ternate", "Tidore Kepulauan", "Tomohon", "Tual", 
+    "Yogyakarta"
+])
 
 st.markdown(
     """
@@ -248,8 +268,8 @@ def read_inventory(engine) -> pd.DataFrame:
 def add_inventory(engine, **kwargs):
     q = text("""
         INSERT INTO inventory_skincare 
-        (nama_brand, nama_produk, kategori, tanggal_beli, tanggal_buka, pao_bulan, tanggal_kadaluwarsa, volume_ml, harga_idr, catatan)
-        VALUES (:nama_brand, :nama_produk, :kategori, :tanggal_beli, :tanggal_buka, :pao_bulan, :tanggal_kadaluwarsa, :volume_ml, :harga_idr, :catatan)
+        (nama_brand, nama_produk, kategori, tanggal_beli, tanggal_buka, pao_bulan, tanggal_kadaluwarsa, catatan)
+        VALUES (:nama_brand, :nama_produk, :kategori, :tanggal_beli, :tanggal_buka, :pao_bulan, :tanggal_kadaluwarsa, :catatan)
     """)
     try:
         with engine.begin() as conn: conn.execute(q, kwargs)
@@ -283,7 +303,8 @@ def get_data_paths(d: date):
 def resolve_coords(city: str):
     if not OWM_API_KEY: return None
     try:
-        url = f"http://api.openweathermap.org/geo/1.0/direct?q={city}&limit=1&appid={OWM_API_KEY}"
+        # Tambahkan ,ID untuk memastikan pencarian di Indonesia
+        url = f"http://api.openweathermap.org/geo/1.0/direct?q={city},ID&limit=1&appid={OWM_API_KEY}"
         r = requests.get(url, timeout=5)
         if r.status_code == 200 and r.json():
             d = r.json()[0]
@@ -291,9 +312,18 @@ def resolve_coords(city: str):
     except: return None
     return None
 
-def save_to_gsheets(new_entry: pd.DataFrame):
+def get_ip_info():
+    try:
+        # Menggunakan ip-api.com untuk deteksi lokasi via IP
+        r = requests.get("http://ip-api.com/json/", timeout=5)
+        if r.status_code == 200:
+            return r.json()
+    except: return None
+    return None
+
+def sync_journal_to_gsheets(df: pd.DataFrame):
     """
-    Attempts to save the new entry to Google Sheets using streamlit-gsheets.
+    Syncs the full journal dataframe to Google Sheets.
     Requires st.secrets["connections"]["gsheets"] to be configured.
     """
     try:
@@ -305,13 +335,7 @@ def save_to_gsheets(new_entry: pd.DataFrame):
         conn = st.connection("gsheets", type=GSheetsConnection)
         worksheet = "Skincare_Journal"
         
-        try:
-            existing = conn.read(worksheet=worksheet, ttl=0)
-            updated = pd.concat([existing, new_entry], ignore_index=True)
-            conn.update(worksheet=worksheet, data=updated)
-        except:
-            # If worksheet doesn't exist or is empty, create/write new
-            conn.update(worksheet=worksheet, data=new_entry)
+        conn.update(worksheet=worksheet, data=df)
             
         return True, "Synced to Google Sheets"
     except ImportError:
@@ -421,18 +445,75 @@ def scrape_cosdna_detailed(url):
             if len(tds) >= 4:
                 name = tds[0].text.strip()
                 func = tds[1].text.strip()
-                acne = tds[2].text.strip()
-                irritant = tds[3].text.strip()
+                acne_str = tds[2].text.strip()
+                irritant_str = tds[3].text.strip()
                 
                 if name and "Ingredient" not in name:
+                    # Convert acne/irritant to integers safely
+                    try:
+                        acne = int(float(acne_str)) if acne_str else 0
+                    except (ValueError, TypeError):
+                        acne = 0
+                    
+                    try:
+                        irritant = int(float(irritant_str)) if irritant_str else 0
+                    except (ValueError, TypeError):
+                        irritant = 0
+                    
+                    # Clean function description
+                    func_clean = _clean_function_description(func)
+                    
                     data.append({
                         "Ingredient": name,
-                        "Function": func,
+                        "Function": func_clean,
                         "Acne": acne,
                         "Irritant": irritant
                     })
         return data
     except: return []
+
+def _clean_function_description(func_text):
+    """
+    Clean and standardize function descriptions for better display.
+    """
+    if not func_text:
+        return "Unknown"
+    
+    # Remove HTML tags and extra whitespace
+    import re
+    func_clean = re.sub(r'<[^>]+>', '', func_text)
+    func_clean = func_clean.strip()
+    
+    # Common function mappings for better readability
+    function_mapping = {
+        "surfactant": "Cleansing Agent",
+        "emulsifier": "Emulsion Stabilizer", 
+        "preservative": "Preservative",
+        "fragrance": "Fragrance",
+        "colorant": "Coloring Agent",
+        "humectant": "Moisturizing Agent",
+        "emollient": "Skin Softener",
+        "solvent": "Solvent",
+        "thickener": "Viscosity Control",
+        "antioxidant": "Antioxidant",
+        "conditioning": "Skin Conditioning",
+        "buffering": "pH Adjuster",
+        "chelating": "Chelating Agent",
+        "denaturant": "Denaturant",
+        "opacifier": "Opacifying Agent",
+        "viscosity": "Viscosity Control",
+        "binder": "Binding Agent",
+        "abrasive": "Exfoliating Agent",
+        "anticaking": "Anti-caking Agent"
+    }
+    
+    func_lower = func_clean.lower()
+    for key, value in function_mapping.items():
+        if key in func_lower:
+            return value
+    
+    # Return cleaned version if no mapping found
+    return func_clean if len(func_clean) > 0 else "Unknown"
 
 # =========================================================
 # 3. SIDEBAR (Dijalankan SETELAH fungsi didefinisikan)
@@ -451,26 +532,60 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**📍 Location Settings**")
     
-    # Dropdown Pilihan Kota
-    city_options = list(CITIES.keys()) + ["Custom (Manual Input)"]
-    selected_option = st.selectbox("Select City:", city_options, index=1)
+    # Dropdown Pilihan Kota (Searchable)
+    city_options = ALL_CITIES + ["Lainnya (Cari Manual)"]
     
-    if selected_option == "Custom (Manual Input)":
-        selected_city_name = st.text_input("Enter City Name:", "Jakarta")
-        selected_coords = None
+    # Default ke kota terakhir yang di-sync (agar tidak muncul warning mismatch saat reload)
+    current_city_state = st.session_state.get("last_city", "Banjarmasin")
+    
+    if current_city_state in city_options:
+        try: def_idx = city_options.index(current_city_state)
+        except: def_idx = 0
+        manual_default = "Banjarmasin"
+    else:
+        try: def_idx = city_options.index("Lainnya (Cari Manual)")
+        except: def_idx = 0
+        manual_default = current_city_state
+    
+    selected_option = st.selectbox("Pilih Kota (Ketik untuk cari):", city_options, index=def_idx)
+    
+    if selected_option == "Lainnya (Cari Manual)":
+        selected_city_name = st.text_input("Masukkan Nama Kota:", manual_default)
+        selected_coords = None # Akan dicari saat sync
     else:
         selected_city_name = selected_option
-        selected_coords = CITIES[selected_option]
+        # Cek cache major cities, jika tidak ada, akan dicari saat sync
+        selected_coords = MAJOR_CITIES_COORDS.get(selected_city_name)
     
+    if st.button("📍 Deteksi Lokasi Otomatis", help="Gunakan lokasi IP Address saat ini"):
+        with st.spinner("Mendeteksi lokasi..."):
+            ip_data = get_ip_info()
+            if ip_data and ip_data.get("status") == "success":
+                d_city = ip_data.get("city", "Unknown")
+                d_lat = ip_data.get("lat")
+                d_lon = ip_data.get("lon")
+                
+                # Jalankan pipeline langsung
+                run_all(lat=d_lat, lon=d_lon)
+                
+                st.session_state["pipeline_run"] = datetime.now()
+                st.session_state["last_city"] = d_city
+                st.success(f"Lokasi ditemukan: {d_city}")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("Gagal mendeteksi lokasi otomatis.")
+
     st.markdown("---")
     st.markdown("**System Controls**")
     
     if st.button("🔄 Sync Data Pipeline", width='stretch'):
-        if selected_option == "Custom (Manual Input)":
-            with st.spinner(f"Locating '{selected_city_name}'..."):
+        # Jika koordinat belum ada (dari manual atau kota non-major), cari sekarang
+        if not selected_coords:
+            with st.spinner(f"Mencari lokasi '{selected_city_name}'..."):
                 selected_coords = resolve_coords(selected_city_name)
                 if not selected_coords:
-                    st.error(f"❌ Could not find location: {selected_city_name}")
+                    st.error(f"❌ Lokasi tidak ditemukan: {selected_city_name}")
                     st.stop()
 
         with st.spinner(f"Updating weather for {selected_city_name}..."):
@@ -522,11 +637,13 @@ if nav == "Dashboard":
         st.markdown(f"### 👋 Hello, User")
         st.markdown(f"Skin environment analysis for **{today.strftime('%A, %d %B %Y')}**")
     with col_r:
-        current_city = st.session_state.get("last_city", selected_city_name)
+        current_city = st.session_state.get("last_city", "Banjarmasin")
         st.markdown(f"<div style='text-align:right; font-weight:600; color:#ec4899;'>📍 {current_city}, ID</div>", unsafe_allow_html=True)
     
     st.markdown("---")
     
+    if current_city.lower() != selected_city_name.lower():
+        st.warning(f"⚠️ Data yang ditampilkan adalah untuk **{current_city}**. Klik tombol **'Sync Data Pipeline'** di sidebar untuk memperbarui data ke **{selected_city_name}**.")
 
 
     c1, c2, c3, c4 = st.columns(4)
@@ -794,26 +911,77 @@ elif nav == "Journal & Check":
 
             st.markdown("---")
             
-            if st.button("💾 Save to Journal"):
+            # Cek apakah jurnal untuk tanggal ini sudah ada
+            journal_df = st.session_state["journal_data"]
+            c_date_str = c_date.strftime("%Y-%m-%d")
+            
+            # Pastikan kolom Date berupa string untuk perbandingan
+            if not journal_df.empty and "Date" in journal_df.columns:
+                journal_df["Date"] = journal_df["Date"].astype(str)
+            
+            entry_exists = False
+            if not journal_df.empty:
+                entry_exists = (journal_df["Date"] == c_date_str).any()
+
+            # Reset konfirmasi jika tanggal berubah
+            if st.session_state.get("confirm_overwrite") and st.session_state.get("confirm_overwrite") != c_date_str:
+                st.session_state["confirm_overwrite"] = None
+
+            trigger_save = False
+            
+            if st.session_state.get("confirm_overwrite") == c_date_str:
+                st.warning(f"⚠️ Jurnal untuk tanggal {c_date_str} sudah ada. Klik tombol di bawah untuk memperbaharui.")
+                col_conf1, col_conf2 = st.columns([1, 2])
+                with col_conf1:
+                    if st.button("🔄 Perbaharui Jurnal"):
+                        trigger_save = True
+                        st.session_state["confirm_overwrite"] = None
+                with col_conf2:
+                    if st.button("❌ Batal"):
+                        st.session_state["confirm_overwrite"] = None
+                        st.rerun()
+            else:
+                if st.button("💾 Save to Journal"):
+                    if entry_exists:
+                        st.session_state["confirm_overwrite"] = c_date_str
+                        st.rerun()
+                    else:
+                        trigger_save = True
+
+            if trigger_save:
                 status_str = "✅ Safe"
                 if conflicts_am or conflicts_pm:
                     status_str = "⚠️ Conflict Detected"
                 elif final_warn_am or final_warn_pm or cross_warn:
                     status_str = "ℹ️ Warnings"
                 
-                new_entry = pd.DataFrame([{
-                    "Date": c_date,
+                new_row = {
+                    "Date": c_date_str,
                     "Day Products": ", ".join(selected_am),
                     "Night Products": ", ".join(selected_pm),
                     "Status": status_str
-                }])
+                }
                 
-                st.session_state["journal_data"] = pd.concat([
-                    st.session_state["journal_data"], new_entry
-                ], ignore_index=True)
+                if entry_exists:
+                    # Update row yang ada
+                    idx = journal_df[journal_df["Date"] == c_date_str].index
+                    for i in idx:
+                        journal_df.at[i, "Day Products"] = new_row["Day Products"]
+                        journal_df.at[i, "Night Products"] = new_row["Night Products"]
+                        journal_df.at[i, "Status"] = new_row["Status"]
+                    st.session_state["journal_data"] = journal_df
+                    success_msg = "Journal Updated!"
+                else:
+                    # Tambah row baru
+                    new_entry = pd.DataFrame([new_row])
+                    st.session_state["journal_data"] = pd.concat([
+                        journal_df, new_entry
+                    ], ignore_index=True)
+                    success_msg = "Journal Entry Saved!"
                 
                 # Save to Google Sheets (if configured)
-                gs_success, gs_msg = save_to_gsheets(new_entry)
+                # Kita kirim full dataframe agar sinkron (overwrite)
+                gs_success, gs_msg = sync_journal_to_gsheets(st.session_state["journal_data"])
                 
                 # Always save to local CSV as backup
                 st.session_state["journal_data"].to_csv("journal_history.csv", index=False)
@@ -823,9 +991,202 @@ elif nav == "Journal & Check":
                 else:
                     st.toast("Saved to local storage (Offline)", icon="💾")
                 
-                st.success("Journal Entry Saved!")
+                st.success(success_msg)
                 time.sleep(1)
                 st.rerun()
+
+            # --- BREAKOUT ANALYSIS FEATURE ---
+            st.markdown("---")
+            st.markdown("### 🚨 Breakout Detector")
+            st.caption("Analisis potensi penyebab breakout berdasarkan riwayat pemakaian produk 2 minggu terakhir.")
+
+            is_breakout = st.checkbox("Apakah anda mengalami breakout / jerawat meradang hari ini?")
+
+            if is_breakout:
+                if st.button("🔍 Analisis Breakout (Cek Riwayat 2 Minggu)"):
+                    # 1. Ambil data jurnal 14 hari terakhir
+                    j_df = st.session_state["journal_data"].copy()
+                    if not j_df.empty:
+                        # Pastikan format tanggal datetime
+                        j_df["Date"] = pd.to_datetime(j_df["Date"], errors='coerce')
+                        
+                        end_date = pd.Timestamp(date.today())
+                        start_date = end_date - timedelta(days=14)
+                        
+                        mask = (j_df["Date"] >= start_date) & (j_df["Date"] <= end_date)
+                        recent_logs = j_df.loc[mask]
+                        
+                        if recent_logs.empty:
+                            st.warning("Tidak ada data jurnal dalam 14 hari terakhir.")
+                        else:
+                            st.info(f"Menganalisis {len(recent_logs)} entri jurnal dari {start_date.date()} sampai {end_date.date()}...")
+                            
+                            # Analisis Status Jurnal (Warnings)
+                            warn_mask = recent_logs["Status"].astype(str).str.contains("Warning|Conflict", case=False)
+                            warn_logs = recent_logs[warn_mask]
+                            
+                            if not warn_logs.empty:
+                                st.warning(f"⚠️ Terdeteksi {len(warn_logs)} hari dengan peringatan konflik/risiko dalam 2 minggu terakhir:")
+                                for _, w_row in warn_logs.iterrows():
+                                    w_date = w_row["Date"].strftime("%Y-%m-%d") if isinstance(w_row["Date"], pd.Timestamp) else str(w_row["Date"])
+                                    w_status = w_row["Status"]
+                                    d_p = str(w_row.get('Day Products', '')).replace('nan', '').strip()
+                                    n_p = str(w_row.get('Night Products', '')).replace('nan', '').strip()
+                                    w_prods = ", ".join(filter(None, [d_p, n_p]))
+                                    st.markdown(f"- **{w_date}**: {w_status} (Produk: {w_prods})")
+                                    
+                                    # --- RE-ANALYSIS FOR EXPLANATION ---
+                                    # Re-construct lists
+                                    d_p_list = [x.strip() for x in str(w_row.get('Day Products', '')).split(",") if x.strip()]
+                                    n_p_list = [x.strip() for x in str(w_row.get('Night Products', '')).split(",") if x.strip()]
+                                    all_p_list = list(set(d_p_list + n_p_list))
+                                    
+                                    # 1. Check Product Conflicts (using current rules)
+                                    c_conf, c_warn = detect_conflicts(all_p_list, df_ing)
+                                    
+                                    # 2. Check Sunscreen (Heuristic for historical data)
+                                    has_spf = any(x in " ".join(d_p_list).lower() for x in ['sunscreen', 'spf', 'sunblock', 'uv'])
+                                    weather_notes = []
+                                    if d_p_list and not has_spf:
+                                        weather_notes.append("⚠️ **Missing Sunscreen**: Wajib jika UV Index >= 3 (Cek riwayat cuaca).")
+                                        
+                                    # Combine explanations
+                                    explanation = c_conf + c_warn + weather_notes
+                                    
+                                    if explanation:
+                                        with st.expander("ℹ️ Penjelasan Potensi Warning"):
+                                            for exp in explanation:
+                                                # Clean up the string for display
+                                                clean_exp = exp.replace("ℹ️ ", "").replace("⚠️ ", "")
+                                                st.caption(f"• {clean_exp}")
+                                    else:
+                                        with st.expander("ℹ️ Penjelasan Potensi Warning"):
+                                            st.caption("Warning mungkin disebabkan oleh kondisi cuaca spesifik (Kelembapan Rendah/UV Tinggi) pada tanggal tersebut yang tidak dapat direkonstruksi saat ini.")
+                            
+                            # 2. Kumpulkan semua produk unik yang dipakai
+                            used_products = set()
+                            for _, r in recent_logs.iterrows():
+                                d_p = [x.strip() for x in str(r.get("Day Products", "")).split(",") if x.strip()]
+                                n_p = [x.strip() for x in str(r.get("Night Products", "")).split(",") if x.strip()]
+                                used_products.update(d_p)
+                                used_products.update(n_p)
+                            
+                            if not used_products:
+                                st.warning("Tidak ada produk yang tercatat dalam periode ini.")
+                            else:
+                                # 3. Cek Ingredients (Acne & Irritant)
+                                st.markdown(f"**Produk yang dipakai ({len(used_products)}):**")
+                                st.caption(", ".join(list(used_products)))
+                                
+                                if "detailed_analysis" in df_ing.columns:
+                                    # Initialize the suspect lists before the loop
+                                    suspects_acne = []
+                                    suspects_irr = []
+                                    
+                                    # Filter df_ing untuk produk yang dipakai saja
+                                    subset_ing = df_ing[df_ing["nama_produk"].isin(used_products)]
+                                    
+                                    if subset_ing.empty:
+                                        st.warning("⚠️ Data ingredients belum tersedia untuk produk-produk ini. Pastikan sudah menjalankan Sync Data Pipeline.")
+                                    
+                                    # Cek apakah ada produk yang datanya kosong ("[]")
+                                    empty_data_prods = subset_ing[subset_ing["detailed_analysis"] == "[]"]["nama_produk"].tolist()
+                                    if empty_data_prods:
+                                        st.caption(f"ℹ️ Produk berikut sudah di-scan tapi tidak ditemukan data ingredients detail: {', '.join(empty_data_prods)}")
+
+                                    debug_info = []
+                                    
+                                    for _, row in subset_ing.iterrows():
+                                        try:
+                                            raw_json = row.get("detailed_analysis")
+                                            
+                                            # Enhanced validation for raw_json
+                                            if not raw_json or raw_json == "[]" or raw_json.strip() == "":
+                                                debug_info.append(f"No data for {row['nama_produk']}")
+                                                continue
+                                                
+                                            try:
+                                                dets = json.loads(raw_json)
+                                            except json.JSONDecodeError as e:
+                                                debug_info.append(f"JSON error for {row['nama_produk']}: {str(e)}")
+                                                continue
+                                                
+                                            if not isinstance(dets, list):
+                                                debug_info.append(f"Invalid data format for {row['nama_produk']}")
+                                                continue
+                                                
+                                            for d in dets:
+                                                # Ensure d is a dictionary
+                                                if not isinstance(d, dict):
+                                                    continue
+                                                    
+                                                # Get scores with proper validation
+                                                try:
+                                                    # Try Capitalized keys (CosDNA standard) first, then lowercase
+                                                    ac_raw = d.get("Acne") if d.get("Acne") is not None else d.get("acne", 0)
+                                                    ir_raw = d.get("Irritant") if d.get("Irritant") is not None else d.get("irritant", 0)
+                                                    
+                                                    ac_val = int(float(ac_raw)) if ac_raw is not None else 0
+                                                    ir_val = int(float(ir_raw)) if ir_raw is not None else 0
+                                                except (ValueError, TypeError):
+                                                    ac_val = 0
+                                                    ir_val = 0
+                                                    
+                                                # Get ingredient name with validation
+                                                ingredient_name = d.get("Ingredient") or d.get("name") or "Unknown"
+                                                if not ingredient_name or ingredient_name.strip() == "":
+                                                    continue
+                                                    
+                                                if ac_val >= 3:
+                                                    suspects_acne.append({
+                                                        "product": row["nama_produk"],
+                                                        "ingredient": ingredient_name,
+                                                        "score": ac_val
+                                                    })
+                                                
+                                                if ir_val >= 3:
+                                                    suspects_irr.append({
+                                                        "product": row["nama_produk"],
+                                                        "ingredient": ingredient_name,
+                                                        "score": ir_val
+                                                    })
+                                                    
+                                        except Exception as e:
+                                            debug_info.append(f"Error processing {row['nama_produk']}: {str(e)}")
+                                            continue
+                                    
+                                    # Show debug info if no results found
+                                    if not suspects_acne and not suspects_irr and debug_info:
+                                        with st.expander("🔍 Debug Information"):
+                                            for info in debug_info[:10]:  # Show first 10 debug messages
+                                                st.caption(info)
+                                    
+                                    # Tampilkan Hasil
+                                    c_res1, c_res2 = st.columns(2)
+                                    
+                                    with c_res1:
+                                        st.markdown("#### 🌋 Acne Triggers skor (1-5)")
+                                        if suspects_acne:
+                                            suspects_acne.sort(key=lambda x: x["score"], reverse=True)
+                                            for s in suspects_acne:
+                                                color = "#b91c1c" if s["score"] >= 3 else "#d97706"
+                                                st.markdown(f"- <span style='color:{color}; font-weight:bold;'>{s['ingredient']} ({s['score']})</span> <span style='font-size:0.8em; color:#64748b;'>in {s['product']}</span>", unsafe_allow_html=True)
+                                        else:
+                                            st.success("Tidak ditemukan ingredients dengan skor Acne tinggi (>= 3).")
+                                            
+                                    with c_res2:
+                                        st.markdown("#### 🔥 Irritant Triggers skor (1-5)")
+                                        if suspects_irr:
+                                            suspects_irr.sort(key=lambda x: x["score"], reverse=True)
+                                            for s in suspects_irr:
+                                                color = "#b91c1c" if s["score"] >= 3 else "#d97706"
+                                                st.markdown(f"- <span style='color:{color}; font-weight:bold;'>{s['ingredient']} ({s['score']})</span> <span style='font-size:0.8em; color:#64748b;'>in {s['product']}</span>", unsafe_allow_html=True)
+                                        else:
+                                            st.success("Tidak ditemukan ingredients dengan skor Irritant tinggi (>= 3).")
+                                else:
+                                    st.error("Data detail ingredients belum tersedia. Silakan jalankan Sync Data Pipeline.")
+                    else:
+                        st.warning("Data jurnal kosong.")
 
     with tab2:
         st.markdown("### 📊 Personal Skin Tracker History")
@@ -834,8 +1195,25 @@ elif nav == "Journal & Check":
         if not st.session_state["journal_data"].empty:
             st.dataframe(st.session_state["journal_data"], width="stretch")
             
-            if st.button("🗑️ Clear History"):
+            st.markdown("---")
+
+            with st.expander("🗑️ Delete Specific Entry"):
+                dates_list = st.session_state["journal_data"]["Date"].astype(str).unique().tolist()
+                dates_list.sort(reverse=True)
+                sel_del_date = st.selectbox("Select Date to Remove:", dates_list, key="del_date_sel")
+                
+                if st.button("Delete Selected Entry"):
+                    st.session_state["journal_data"] = st.session_state["journal_data"][st.session_state["journal_data"]["Date"].astype(str) != sel_del_date]
+                    st.session_state["journal_data"].to_csv("journal_history.csv", index=False)
+                    sync_journal_to_gsheets(st.session_state["journal_data"])
+                    st.success(f"Deleted entry for {sel_del_date}")
+                    time.sleep(0.5)
+                    st.rerun()
+
+            if st.button("🗑️ Clear All History"):
                 st.session_state["journal_data"] = pd.DataFrame(columns=["Date", "Day Products", "Night Products", "Status"])
+                st.session_state["journal_data"].to_csv("journal_history.csv", index=False)
+                sync_journal_to_gsheets(st.session_state["journal_data"])
                 st.rerun()
                 
             # Export button
@@ -967,7 +1345,7 @@ elif nav == "Inventory":
                 try:
                     add_inventory(engine, nama_brand="-", nama_produk=prod, kategori=cat, tanggal_beli=None,
                                   tanggal_buka=open_dt, pao_bulan=pao, tanggal_kadaluwarsa=exp_dt,
-                                  volume_ml=0, harga_idr=0, catatan=note)
+                                  catatan=note)
                     st.success("Product Added Successfully")
                     st.session_state.pop("form_prod", None)
                     st.session_state.pop("form_notes", None)
