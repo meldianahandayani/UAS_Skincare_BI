@@ -261,15 +261,15 @@ def get_engine():
 
 def read_inventory(engine) -> pd.DataFrame:
     try:
-        return pd.read_sql("SELECT * FROM inventory_skincare ORDER BY nama_brand, nama_produk;", engine)
+        return pd.read_sql("SELECT * FROM inventory_skincare ORDER BY nama_produk;", engine)
     except:
         return pd.DataFrame()
 
 def add_inventory(engine, **kwargs):
     q = text("""
         INSERT INTO inventory_skincare 
-        (nama_brand, nama_produk, kategori, tanggal_beli, tanggal_buka, pao_bulan, tanggal_kadaluwarsa, catatan)
-        VALUES (:nama_brand, :nama_produk, :kategori, :tanggal_beli, :tanggal_buka, :pao_bulan, :tanggal_kadaluwarsa, :catatan)
+        (nama_produk, kategori, tanggal_beli, tanggal_buka, pao_bulan, tanggal_kadaluwarsa, catatan)
+        VALUES (:nama_produk, :kategori, :tanggal_beli, :tanggal_buka, :pao_bulan, :tanggal_kadaluwarsa, :catatan)
     """)
     try:
         with engine.begin() as conn: conn.execute(q, kwargs)
@@ -682,7 +682,7 @@ if nav == "Dashboard":
         soon_list = chk[(chk["effective_expiry"] >= now_ts) & ((chk["effective_expiry"] - now_ts).dt.days <= 30)]
         
         if not expired_list.empty:
-            st.error(f"🚨 **EXPIRED ALERT**: {len(expired_list)} product(s) have expired! ({', '.join(expired_list['nama_produk'].iloc[:3])}{'...' if len(expired_list)>3 else ''})")
+            st.error(f"🚨 **EXPIRED ALERT**: {len(expired_list)} product(s) have expired! ({', '.join(expired_list['nama_produk'].iloc[:3])}{'...' if len(expired_list)>3 else ''}) Remove expired product from active inventory.")
         if not soon_list.empty:
             soon_list = soon_list.sort_values("effective_expiry")
             items = []
@@ -690,7 +690,7 @@ if nav == "Dashboard":
                 d_left = (row['effective_expiry'] - now_ts).days
                 items.append(f"{row['nama_produk']} ({d_left} days)")
             
-            st.warning(f"⏳ **EXPIRY WARNING**: {len(soon_list)} product(s) ({', '.join(items)}{'...' if len(soon_list)>3 else ''})")
+            st.warning(f"⏳ **EXPIRY WARNING**: {len(soon_list)} product(s) ({', '.join(items)}{'...' if len(soon_list)>3 else ''}) Prioritize product usage before expiry")
 
     st.markdown("### 🧴 Daily Protocol")
     
@@ -1343,7 +1343,7 @@ elif nav == "Inventory":
             
             if st.form_submit_button("Save to Shelf"):
                 try:
-                    add_inventory(engine, nama_brand="-", nama_produk=prod, kategori=cat, tanggal_beli=None,
+                    add_inventory(engine, nama_produk=prod, kategori=cat, tanggal_beli=None,
                                   tanggal_buka=open_dt, pao_bulan=pao, tanggal_kadaluwarsa=exp_dt,
                                   catatan=note)
                     st.success("Product Added Successfully")

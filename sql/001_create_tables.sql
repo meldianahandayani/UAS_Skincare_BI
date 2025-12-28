@@ -1,6 +1,5 @@
 CREATE TABLE IF NOT EXISTS inventory_skincare (
   id_produk SERIAL PRIMARY KEY,
-  nama_brand TEXT NOT NULL,
   nama_produk TEXT NOT NULL,
   kategori TEXT NOT NULL,
   tanggal_beli DATE,
