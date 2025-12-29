@@ -1,0 +1,13 @@
+# Dockerfile.airflow
+# Use a specific Airflow version image (adjust if needed, but ensure compatibility with your Airflow setup)
+FROM apache/airflow:2.7.2-python3.10
+
+# Switch to the airflow user
+USER airflow
+
+# Copy your requirements.txt with correct ownership
+COPY --chown=airflow:airflow requirements.txt /requirements.txt
+
+# Install Python dependencies as the airflow user
+# The --user flag installs packages for the current user, which is the recommended way
+RUN pip install --user --no-cache-dir -r /requirements.txt
