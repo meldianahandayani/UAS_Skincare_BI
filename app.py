@@ -555,7 +555,8 @@ if nav == "Dashboard":
     card(c1, "UV Index", f"{w_uv_now:.1f}", sub_uv)
     card(c2, "Humidity", f"{w_hum_now:.0f}%", sub_hum)
     card(c3, "Temperature", f"{w_temp_now:.1f}°C", sub_temp)
-    card(c4, "Skin Log", f"{len(df_trk)} Days", "Data Points")
+    df_history_total = load_journal_data() 
+    card(c4, "Skin Log", f"{len(df_history_total)} Days", "Data Points")
     
     if not df_inv_sql.empty:
         chk = df_inv_sql.copy()
