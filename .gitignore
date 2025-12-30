@@ -1,7 +1,18 @@
+# Environments
 .env
+.venv/
+env/
+venv/
+
+# Python internal
 __pycache__/
 *.pyc
+
+# Data & Database
 datalake/
 *.db
+logs/
+
+# Credentials / Rahasia
 google_credentials.json
-.venv/
+*.key
