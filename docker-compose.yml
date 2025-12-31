@@ -17,6 +17,11 @@ x-airflow-common: &airflow-common
     # Connection to App DB (Override for Docker Network)
     # Mengarahkan koneksi ke container 'skincare_postgres'
     DB_URL: postgresql://admin:admin@skincare_postgres:5432/skincare_db
+    # MinIO Configuration
+    MINIO_ENDPOINT: http://minio:9000
+    MINIO_ACCESS_KEY: skincare_admin
+    MINIO_SECRET_KEY: skincare_password
+    _PIP_ADDITIONAL_REQUIREMENTS: "s3fs minio"
     OWM_API_KEY: ${OWM_API_KEY}
   volumes:
     - ./dags:/opt/airflow/dags
@@ -30,6 +35,8 @@ x-airflow-common: &airflow-common
     redis:
       condition: service_healthy
     airflow-postgres:
+      condition: service_healthy
+    minio:
       condition: service_healthy
     postgres:
       condition: service_healthy
@@ -52,7 +59,7 @@ services:
       - pg_data:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "admin"]
+      test: ["CMD", "pg_isready", "-U", "admin", "-d", "skincare_db"]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -72,6 +79,39 @@ services:
       interval: 10s
       retries: 5
       start_period: 5s
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: skincare_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: skincare_admin
+      MINIO_ROOT_PASSWORD: skincare_password
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # MinIO Setup (Create Bucket)
+  minio-setup:
+    image: minio/mc
+    container_name: skincare_minio_setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set myminio http://minio:9000 skincare_admin skincare_password; do echo '...waiting...' && sleep 1; done;
+      mc mb myminio/datalake;
+      exit 0;
+      "
 
   redis:
     image: redis:latest
@@ -136,3 +176,4 @@ services:
 volumes:
   pg_data:
   airflow_postgres_data:
+  minio_data:

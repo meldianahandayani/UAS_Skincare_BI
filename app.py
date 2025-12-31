@@ -9,6 +9,7 @@ from src.pipeline import run_all
 from src.utils.config import DB_URL, OWM_API_KEY
 import requests
 from bs4 import BeautifulSoup
+import os
 
 # =========================================================
 # 1. KONFIGURASI HALAMAN & CSS
@@ -294,18 +295,34 @@ def delete_inventory(engine, id_produk: int):
     with engine.begin() as conn: conn.execute(text("DELETE FROM inventory_skincare WHERE id_produk = :id"), {"id": id_produk})
 
 def safe_read_parquet(p: Path) -> pd.DataFrame:
-    try: return pd.read_parquet(p) if p.exists() else pd.DataFrame()
-    except: return pd.DataFrame()
+    # MinIO Config for App (Default to localhost if running outside Docker)
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
+    storage_options = {
+        "key": os.getenv("MINIO_ACCESS_KEY", "skincare_admin"),
+        "secret": os.getenv("MINIO_SECRET_KEY", "skincare_password"),
+        "client_kwargs": {"endpoint_url": minio_endpoint}
+    }
+    
+    try:
+        # Handle S3 paths
+        if isinstance(p, str) and p.startswith("s3://"):
+            return pd.read_parquet(p, storage_options=storage_options)
+            
+        # Fallback for local paths
+        p_obj = Path(p)
+        return pd.read_parquet(p_obj) if p_obj.exists() else pd.DataFrame()
+    except Exception as e:
+        return pd.DataFrame()
 
 def get_data_paths(d: date):
-    base = Path("datalake")
+    base = "s3://datalake"
     return {
-        "gold_ctx": base / "gold" / "daily_context" / f"date={d}" / "daily_context.parquet",
-        "gold_rec": base / "gold" / "recommendation" / f"date={d}" / "recommendation.parquet",
-        "silver_inv": base / "silver" / "inventory" / f"date={d}" / "inventory.parquet",
-        "silver_trk": base / "silver" / "tracker" / f"date={d}" / "tracker.parquet",
-        "silver_wth": base / "silver" / "weather" / f"date={d}" / "weather.parquet",
-        "silver_ing": base / "silver" / "ingredients" / f"date={d}" / "ingredients.parquet",
+        "gold_ctx": f"{base}/gold/daily_context/date={d}/daily_context.parquet",
+        "gold_rec": f"{base}/gold/recommendation/date={d}/recommendation.parquet",
+        "silver_inv": f"{base}/silver/inventory/date={d}/inventory.parquet",
+        "silver_trk": f"{base}/silver/tracker/date={d}/tracker.parquet",
+        "silver_wth": f"{base}/silver/weather/date={d}/weather.parquet",
+        "silver_ing": f"{base}/silver/ingredients/date={d}/ingredients.parquet",
     }
 
 def resolve_coords(city: str):

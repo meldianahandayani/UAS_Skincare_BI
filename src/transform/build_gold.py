@@ -1,8 +1,8 @@
 import json
 import pandas as pd
+import os
+import s3fs
 from datetime import date
-from pathlib import Path
-from src.utils.paths import part_dir, ensure_dir
 
 def run(d: date, ingredients_df=None):
     """
@@ -12,28 +12,41 @@ def run(d: date, ingredients_df=None):
     - Daily context from weather + tracker data
     - Personalized recommendations based on inventory + conditions
     """
+    # MinIO Setup
+    is_docker = os.path.exists("/.dockerenv")
+    default_host = "minio" if is_docker else "localhost"
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", f"http://{default_host}:9000")
+    
+    storage_options = {
+        "key": os.getenv("MINIO_ACCESS_KEY", "skincare_admin"),
+        "secret": os.getenv("MINIO_SECRET_KEY", "skincare_password"),
+        "client_kwargs": {"endpoint_url": minio_endpoint}
+    }
+    
+    fs = s3fs.S3FileSystem(**storage_options)
+    bucket = "datalake"
     
     # Load data from Silver layer
     silver_paths = {
-        "tracker": Path(part_dir("silver", "tracker", d)) / "tracker.parquet",
-        "weather": Path(part_dir("silver", "weather", d)) / "weather.parquet", 
-        "inventory": Path(part_dir("silver", "inventory", d)) / "inventory.parquet"
+        "tracker": f"s3://{bucket}/silver/tracker/date={d}/tracker.parquet",
+        "weather": f"s3://{bucket}/silver/weather/date={d}/weather.parquet", 
+        "inventory": f"s3://{bucket}/silver/inventory/date={d}/inventory.parquet"
     }
     
     # Load tracker data
     df_tracker = pd.DataFrame()
-    if silver_paths["tracker"].exists():
-        df_tracker = pd.read_parquet(silver_paths["tracker"])
+    if fs.exists(silver_paths["tracker"]):
+        df_tracker = pd.read_parquet(silver_paths["tracker"], storage_options=storage_options)
     
     # Load weather data  
     df_weather = pd.DataFrame()
-    if silver_paths["weather"].exists():
-        df_weather = pd.read_parquet(silver_paths["weather"])
+    if fs.exists(silver_paths["weather"]):
+        df_weather = pd.read_parquet(silver_paths["weather"], storage_options=storage_options)
     
     # Load inventory data
     df_inventory = pd.DataFrame()
-    if silver_paths["inventory"].exists():
-        df_inventory = pd.read_parquet(silver_paths["inventory"])
+    if fs.exists(silver_paths["inventory"]):
+        df_inventory = pd.read_parquet(silver_paths["inventory"], storage_options=storage_options)
     
     # Build Daily Context
     daily_context = {}
@@ -99,22 +112,22 @@ def run(d: date, ingredients_df=None):
             recommendation["warnings"] += "No sunscreen in inventory - essential for daily protection. "
     
     # Save Daily Context to Gold
+    ctx_path = f"s3://{bucket}/gold/daily_context/date={d}/daily_context.parquet"
     if daily_context:
-        ctx_dir = ensure_dir(part_dir("gold", "daily_context", d))
-        ctx_path = ctx_dir / "daily_context.parquet"
-        pd.DataFrame([daily_context]).to_parquet(ctx_path, index=False)
+        pd.DataFrame([daily_context]).to_parquet(ctx_path, index=False, storage_options=storage_options)
+        print(f"✅ Gold Daily Context saved: {ctx_path}")
     else:
-        ctx_path = "Not Found"
+        ctx_path = None
     
     # Save Recommendation to Gold  
+    rec_path = f"s3://{bucket}/gold/recommendation/date={d}/recommendation.parquet"
     if recommendation:
-        rec_dir = ensure_dir(part_dir("gold", "recommendation", d))
-        rec_path = rec_dir / "recommendation.parquet"
-        pd.DataFrame([recommendation]).to_parquet(rec_path, index=False)
+        pd.DataFrame([recommendation]).to_parquet(rec_path, index=False, storage_options=storage_options)
+        print(f"✅ Gold Recommendation saved: {rec_path}")
     else:
-        rec_path = "Not Found"
+        rec_path = None
     
     return {
-        "daily_context": str(ctx_path),
-        "recommendation": str(rec_path)
+        "daily_context": ctx_path,
+        "recommendation": rec_path
     }

@@ -1,5 +1,7 @@
 import json
 import time
+import os
+import s3fs
 from datetime import date, datetime
 from pathlib import Path
 
@@ -8,7 +10,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from src.utils.config import OWM_API_KEY, LAT, LON, UNITS
-from src.utils.paths import ensure_dir, part_dir
 
 
 def _session() -> requests.Session:
@@ -41,9 +42,6 @@ def run(d: date, lat=None, lon=None) -> str:
 
     if not OWM_API_KEY:
         raise RuntimeError("OWM_API_KEY belum diisi di .env")
-
-    out_dir: Path = ensure_dir(part_dir("bronze", "weather_raw", d))
-    out_path: Path = out_dir / "weather.json"
 
     sess = _session()
     last_err = None
@@ -88,8 +86,19 @@ def run(d: date, lat=None, lon=None) -> str:
     if payload is None:
         raise RuntimeError(f"Gagal mengambil data cuaca dari API (OpenWeatherMap). Error: {last_err}. Pastikan API Key valid dan koneksi internet stabil.")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    # MinIO Write
+    is_docker = os.path.exists("/.dockerenv")
+    default_host = "minio" if is_docker else "localhost"
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", f"http://{default_host}:9000")
+    fs = s3fs.S3FileSystem(
+        key=os.getenv("MINIO_ACCESS_KEY", "skincare_admin"),
+        secret=os.getenv("MINIO_SECRET_KEY", "skincare_password"),
+        client_kwargs={'endpoint_url': minio_endpoint}
+    )
 
-    return str(out_path)
+    s3_path = f"datalake/bronze/weather/date={d}/weather.json"
+    with fs.open(s3_path, "w") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    
+    print(f"💾 Saved weather to MinIO: s3://{s3_path}")
+    return f"s3://{s3_path}"

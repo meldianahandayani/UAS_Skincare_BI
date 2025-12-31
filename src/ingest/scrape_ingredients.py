@@ -1,12 +1,12 @@
 import re
 import time
+import os
+import s3fs
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from datetime import date
 from urllib.parse import quote_plus
-
-from src.utils.paths import part_dir, ensure_dir
 
 def _safe_name(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "_", s).strip("_")[:120]
@@ -32,7 +32,17 @@ def search_cosdna_url(product_name: str) -> str:
     return ""
 
 def run(d: date, product_list: list[str] = None) -> pd.DataFrame:
-    out_html_dir = ensure_dir(part_dir("bronze", "ingredients_html", d))
+    # MinIO Setup
+    is_docker = os.path.exists("/.dockerenv")
+    default_host = "minio" if is_docker else "localhost"
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", f"http://{default_host}:9000")
+    fs = s3fs.S3FileSystem(
+        key=os.getenv("MINIO_ACCESS_KEY", "skincare_admin"),
+        secret=os.getenv("MINIO_SECRET_KEY", "skincare_password"),
+        client_kwargs={'endpoint_url': minio_endpoint}
+    )
+    
+    base_s3_path = f"datalake/bronze/ingredients_html/date={d}"
 
     if not product_list:
         return pd.DataFrame()
@@ -62,9 +72,10 @@ def run(d: date, product_list: list[str] = None) -> pd.DataFrame:
                     # Verify we got actual content (not an error page)
                     if len(resp.text) > 1000 and "cosmetic" in resp.text.lower():
                         fname = _safe_name(prod) + ".html"
-                        html_file = out_html_dir / fname
-                        html_file.write_text(resp.text, encoding="utf-8")
-                        html_path = str(html_file)
+                        target_path = f"{base_s3_path}/{fname}"
+                        with fs.open(target_path, "wb") as f:
+                            f.write(resp.content)
+                        html_path = f"s3://{target_path}"
                         print(f"✅ Scraped: {prod} ({len(resp.text)} chars)")
                     else:
                         print(f"⚠️ Warning: Content too short or invalid for {prod}")
@@ -86,6 +97,7 @@ def run(d: date, product_list: list[str] = None) -> pd.DataFrame:
     
     # Simpan index metadata agar Silver layer tahu mapping file HTML ke Nama Produk
     if not df.empty:
-        df.to_csv(out_html_dir / "scraped_index.csv", index=False)
+        with fs.open(f"{base_s3_path}/scraped_index.csv", "w") as f:
+            df.to_csv(f, index=False)
 
     return df

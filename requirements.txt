@@ -8,3 +8,6 @@ pyarrow
 psycopg2-binary
 sqlalchemy
 python-dotenv
+s3fs
+minio
+boto3

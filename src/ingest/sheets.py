@@ -1,8 +1,7 @@
 import pandas as pd
+import os
 from datetime import date
 from pathlib import Path
-
-from src.utils.paths import part_dir, ensure_dir
 
 def run(d: date) -> str:
     """
@@ -20,10 +19,18 @@ def run(d: date) -> str:
         df = pd.read_csv(journal_csv_path)
         print(f"📊 Loaded {len(df)} journal entries from journal_history.csv")
 
-    # Ensure output directory exists and save to bronze layer
-    out_dir = ensure_dir(part_dir("bronze", "skin_tracker", d))
-    out_path = out_dir / "tracker.csv"
-    df.to_csv(out_path, index=False)
+    # MinIO Config
+    is_docker = os.path.exists("/.dockerenv")
+    default_host = "minio" if is_docker else "localhost"
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", f"http://{default_host}:9000")
+    storage_options = {
+        "key": os.getenv("MINIO_ACCESS_KEY", "skincare_admin"),
+        "secret": os.getenv("MINIO_SECRET_KEY", "skincare_password"),
+        "client_kwargs": {"endpoint_url": minio_endpoint}
+    }
+
+    s3_path = f"s3://datalake/bronze/sheets/date={d}/tracker.csv"
+    df.to_csv(s3_path, index=False, storage_options=storage_options)
     
-    print(f"💾 Saved tracker data to: {out_path}")
-    return str(out_path)
+    print(f"💾 Saved tracker data to MinIO: {s3_path}")
+    return s3_path

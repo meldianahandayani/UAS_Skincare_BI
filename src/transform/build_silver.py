@@ -1,9 +1,9 @@
 import json
 import pandas as pd
+import os
+import s3fs
 from datetime import date
-from pathlib import Path
 from bs4 import BeautifulSoup
-from src.utils.paths import part_dir, ensure_dir
 
 def _standardize_tracker_cols(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -32,13 +32,12 @@ def _standardize_tracker_cols(df: pd.DataFrame) -> pd.DataFrame:
     # Return only the expected columns in correct order
     return df[expected_cols]
 
-def _parse_ingredients_from_html(html_path: str) -> str:
-    """Membaca file HTML CosDNA dan mengekstrak ingredients menggunakan parser baru."""
+def _parse_ingredients_from_html(html_path: str, fs) -> str:
+    """Membaca file HTML CosDNA dari S3 dan mengekstrak ingredients."""
     try:
-        p = Path(html_path)
-        if not p.exists(): return ""
-        
-        content = p.read_text(encoding="utf-8", errors="replace")
+        with fs.open(html_path, 'r', encoding="utf-8", errors="replace") as f:
+            content = f.read()
+            
         soup = BeautifulSoup(content, "html.parser")
         
         ingredients = []
@@ -80,13 +79,12 @@ def _clean_function_description(func_text: str) -> str:
     # Return cleaned version - preserve original technical terms
     return func_clean if len(func_clean) > 0 else "Unknown"
 
-def _parse_detailed_json(html_path: str) -> str:
-    """Mengekstrak detail ingredients (Function, Acne/Irritant score) ke JSON menggunakan parser baru."""
+def _parse_detailed_json(html_path: str, fs) -> str:
+    """Mengekstrak detail ingredients dari S3 ke JSON."""
     try:
-        p = Path(html_path)
-        if not p.exists(): return "[]"
-        
-        content = p.read_text(encoding="utf-8", errors="replace")
+        with fs.open(html_path, 'r', encoding="utf-8", errors="replace") as f:
+            content = f.read()
+            
         soup = BeautifulSoup(content, "html.parser")
         
         data = []
@@ -116,15 +114,29 @@ def _parse_detailed_json(html_path: str) -> str:
         return "[]"
 
 def run(d: date) -> dict:
-    # Path Input (Bronze)
-    inv_path = Path(part_dir("bronze", "inventory_dump", d)) / "inventory.csv"
-    trk_path = Path(part_dir("bronze", "skin_tracker", d)) / "tracker.csv"
-    wth_path = Path(part_dir("bronze", "weather_raw", d)) / "weather.json"
-    ing_index_path = Path(part_dir("bronze", "ingredients_html", d)) / "scraped_index.csv"
+    # MinIO Setup
+    is_docker = os.path.exists("/.dockerenv")
+    default_host = "minio" if is_docker else "localhost"
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", f"http://{default_host}:9000")
+    
+    storage_options = {
+        "key": os.getenv("MINIO_ACCESS_KEY", "skincare_admin"),
+        "secret": os.getenv("MINIO_SECRET_KEY", "skincare_password"),
+        "client_kwargs": {"endpoint_url": minio_endpoint}
+    }
+    
+    fs = s3fs.S3FileSystem(**storage_options)
+    bucket = "datalake"
+
+    # Path Input (Bronze - S3)
+    inv_path = f"s3://{bucket}/bronze/inventory/date={d}/inventory.csv"
+    trk_path = f"s3://{bucket}/bronze/sheets/date={d}/tracker.csv"
+    wth_path = f"s3://{bucket}/bronze/weather/date={d}/weather.json"
+    ing_index_path = f"s3://{bucket}/bronze/ingredients_html/date={d}/scraped_index.csv"
 
     # --- 1. PROSES TRACKER (SHEETS) ---
-    if trk_path.exists():
-        trk = pd.read_csv(trk_path)
+    if fs.exists(trk_path):
+        trk = pd.read_csv(trk_path, storage_options=storage_options)
         # Panggil fungsi standarisasi baru di atas
         trk = _standardize_tracker_cols(trk)
         
@@ -132,30 +144,31 @@ def run(d: date) -> dict:
         trk["tanggal_input"] = pd.to_datetime(trk["tanggal_input"], errors="coerce").dt.date.astype(str)
         
         # Simpan ke Silver (Parquet)
-        trk_dir = ensure_dir(part_dir("silver", "tracker", d))
-        trk_out = trk_dir / "tracker.parquet"
-        trk.to_parquet(trk_out, index=False)
+        trk_out = f"s3://{bucket}/silver/tracker/date={d}/tracker.parquet"
+        trk.to_parquet(trk_out, index=False, storage_options=storage_options)
+        print(f"✅ Silver Tracker saved: {trk_out}")
     else:
-        trk_out = "Not Found"
+        trk_out = None
 
     # --- 2. PROSES INVENTORY (SQL) ---
-    if inv_path.exists():
-        inv = pd.read_csv(inv_path)
+    if fs.exists(inv_path):
+        inv = pd.read_csv(inv_path, storage_options=storage_options)
         # Standarisasi tanggal inventory
         for col in ["tanggal_buka", "tanggal_kadaluwarsa"]:
             if col in inv.columns:
                 inv[col] = pd.to_datetime(inv[col], errors="coerce").dt.date
         
-        inv_dir = ensure_dir(part_dir("silver", "inventory", d))
-        inv_out = inv_dir / "inventory.parquet"
-        inv.to_parquet(inv_out, index=False)
+        inv_out = f"s3://{bucket}/silver/inventory/date={d}/inventory.parquet"
+        inv.to_parquet(inv_out, index=False, storage_options=storage_options)
+        print(f"✅ Silver Inventory saved: {inv_out}")
     else:
-        inv_out = "Not Found"
+        inv_out = None
 
     # --- 3. PROSES WEATHER ---
-    if wth_path.exists():
-        raw = json.loads(wth_path.read_text(encoding="utf-8"))
-        # (Logika weather tetap sama seperti sebelumnya, disingkat disini agar fokus)
+    if fs.exists(wth_path):
+        with fs.open(wth_path, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+            
         current = raw.get("current", {})
         env = pd.DataFrame([{
             "tanggal": str(d),
@@ -163,19 +176,19 @@ def run(d: date) -> dict:
             "humidity": current.get("humidity"),
             "temp_c": current.get("temp"),
         }])
-        env_dir = ensure_dir(part_dir("silver", "weather", d))
-        env_out = env_dir / "weather.parquet"
-        env.to_parquet(env_out, index=False)
+        env_out = f"s3://{bucket}/silver/weather/date={d}/weather.parquet"
+        env.to_parquet(env_out, index=False, storage_options=storage_options)
+        print(f"✅ Silver Weather saved: {env_out}")
     else:
-        env_out = "Not Found"
+        env_out = None
         
     # --- 4. PROSES INGREDIENTS ---
-    if ing_index_path.exists():
+    if fs.exists(ing_index_path):
         # Baca index mapping (Nama Produk -> Path HTML)
-        ing_df = pd.read_csv(ing_index_path)
+        ing_df = pd.read_csv(ing_index_path, storage_options=storage_options)
         # Lakukan parsing HTML untuk mendapatkan ingredients list
-        ing_df["ingredients_list"] = ing_df["html_path"].apply(_parse_ingredients_from_html)
-        ing_df["detailed_analysis"] = ing_df["html_path"].apply(_parse_detailed_json)
+        ing_df["ingredients_list"] = ing_df["html_path"].apply(lambda x: _parse_ingredients_from_html(x, fs))
+        ing_df["detailed_analysis"] = ing_df["html_path"].apply(lambda x: _parse_detailed_json(x, fs))
         
         # Debugging Log: Tampilkan jumlah produk yang memiliki data detail
         count_with_data = ing_df[ing_df["detailed_analysis"] != "[]"].shape[0]
@@ -186,15 +199,15 @@ def run(d: date) -> dict:
         if not sample_risk.empty:
             print(f"⚠️  Terdeteksi {len(sample_risk)} produk dengan Acne Score >= 3 di Silver Layer.")
         
-        ing_dir = ensure_dir(part_dir("silver", "ingredients", d))
-        ing_out = ing_dir / "ingredients.parquet"
-        ing_df[["nama_produk", "ingredients_list", "detailed_analysis"]].to_parquet(ing_out, index=False)
+        ing_out = f"s3://{bucket}/silver/ingredients/date={d}/ingredients.parquet"
+        ing_df[["nama_produk", "ingredients_list", "detailed_analysis"]].to_parquet(ing_out, index=False, storage_options=storage_options)
+        print(f"✅ Silver Ingredients saved: {ing_out}")
     else:
-        ing_out = "Not Found"
+        ing_out = None
 
     return {
-        "inventory": str(inv_out),
-        "tracker": str(trk_out),
-        "weather": str(env_out),
-        "ingredients": str(ing_out),
+        "inventory": inv_out,
+        "tracker": trk_out,
+        "weather": env_out,
+        "ingredients": ing_out,
     }
