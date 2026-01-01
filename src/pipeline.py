@@ -77,19 +77,6 @@ def run_all(lat=None, lon=None):
 
     ingredients_df = ingest_scrape(d, product_list=product_list)
     
-    # Upload Scrape Result (Bronze)
-    s3_scrape = None
-    if not ingredients_df.empty:
-        fs = get_s3_fs()
-        target_scrape = f"{BUCKET_NAME}/bronze/scrape/date={d}/ingredients.parquet"
-        try:
-            with fs.open(target_scrape, 'wb') as f:
-                ingredients_df.to_parquet(f)
-            s3_scrape = f"s3://{target_scrape}"
-            print(f"✅ Saved Scrape to MinIO: {target_scrape}")
-        except Exception as e:
-            print(f"❌ Failed save Scrape to MinIO: {e}")
-
     # Jalankan Transformasi (Silver & Gold)
     silver_paths = build_silver(d)
     gold_paths = build_gold(d, ingredients_df)
@@ -104,7 +91,6 @@ def run_all(lat=None, lon=None):
             "sheets": sheets_path,
             "weather": weather_path,
             "scrape_rows": len(ingredients_df),
-            "scrape_s3": s3_scrape
         },
         "silver": silver_paths,
         "gold": gold_paths,
