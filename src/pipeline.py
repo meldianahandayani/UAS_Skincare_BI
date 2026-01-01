@@ -60,11 +60,12 @@ def run_all(lat=None, lon=None):
             print(f"⚠️ Gagal membaca produk dari Inventory: {e}")
 
     # 2. Ambil produk dari Journal
-    journal_path = Path("journal_history.csv")
-    
-    if journal_path.exists():
+    if sheets_path:
         try:
-            df_j = pd.read_csv(journal_path)
+            df_j = pd.read_csv(sheets_path, storage_options={
+                "key": MINIO_ACCESS_KEY, "secret": MINIO_SECRET_KEY,
+                "client_kwargs": {'endpoint_url': MINIO_ENDPOINT}
+            })
             # Ambil semua produk dari kolom Day dan Night, pisahkan koma
             for col in ["Day Products", "Night Products"]:
                 if col in df_j.columns:
@@ -72,7 +73,7 @@ def run_all(lat=None, lon=None):
                     if isinstance(items, list):
                         product_list.extend([x.strip() for x in items if x.strip()])
         except Exception as e:
-            print(f"⚠️ Gagal membaca produk dari Journal: {e}")
+            print(f"⚠️ Gagal membaca produk dari Journal (MinIO): {e}")
 
     ingredients_df = ingest_scrape(d, product_list=product_list)
     

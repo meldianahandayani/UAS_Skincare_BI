@@ -9,15 +9,19 @@ def run(d: date) -> str:
     Reads from journal_history.csv which contains the actual data from app.py
     """
     # Read from local journal history file (source of truth from app.py)
-    journal_csv_path = Path("journal_history.csv")
+    possible_paths = [
+        Path("journal_history.csv"),
+        Path("/opt/airflow/journal_history.csv")
+    ]
+    journal_csv_path = next((p for p in possible_paths if p.exists()), None)
     
-    if not journal_csv_path.exists():
+    if not journal_csv_path:
         # Create empty DataFrame with expected columns if file doesn't exist
         df = pd.DataFrame(columns=["Date", "Day Products", "Night Products", "Status"])
-        print("⚠️ journal_history.csv not found. Creating empty tracker data.")
+        print("⚠️ journal_history.csv not found in local or /opt/airflow. Creating empty tracker data.")
     else:
         df = pd.read_csv(journal_csv_path)
-        print(f"📊 Loaded {len(df)} journal entries from journal_history.csv")
+        print(f"📊 Loaded {len(df)} journal entries from {journal_csv_path}")
 
     # MinIO Config
     is_docker = os.path.exists("/.dockerenv")
